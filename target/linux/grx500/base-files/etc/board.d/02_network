@@ -10,7 +10,7 @@ bluecave_get_mac() {
 	local mac
 
 	# U-Boot passes ethaddr=XX:XX:XX:XX:XX:XX on kernel cmdline
-	mac=$(sed -n 's/.*ethaddr=\([0-9a-fA-F:]*\).*/\1/p' /proc/cmdline)
+	mac=$(sed -nE 's/(^|.*[[:space:]])ethaddr=([0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5})([[:space:]]|$).*/\2/p' /proc/cmdline)
 	[ -n "$mac" ] && { echo "$mac"; return 0; }
 
 	# Fallback to U-Boot environment MTD partitions
@@ -21,14 +21,20 @@ bluecave_get_mac() {
 	[ -n "$mac" ] && echo "$mac"
 }
 
-case "$(board_name)" in
-asus,blue-cave)
+bluecave_setup_network() {
+	local lan_mac
+
 	ucidef_set_interfaces_lan_wan "lan1 lan2 lan3 lan4" "wan"
 	lan_mac=$(bluecave_get_mac)
 	if [ -n "$lan_mac" ]; then
 		ucidef_set_interface_macaddr "lan" "$lan_mac"
 		ucidef_set_interface_macaddr "wan" "$(macaddr_add "$lan_mac" 1)"
 	fi
+}
+
+case "$(board_name)" in
+asus,blue-cave)
+	bluecave_setup_network
 	;;
 *)
 	ucidef_set_interfaces_lan_wan "lan1 lan2 lan3 lan4" "wan"

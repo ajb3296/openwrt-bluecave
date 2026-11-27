@@ -9,6 +9,7 @@
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/input/input.h>
 #include <dt-bindings/interrupt-controller/mips-gic.h>
+#include <dt-bindings/leds/common.h>
 
 / {
 	compatible = "asus,blue-cave", "intel,grx500", "lantiq,xrx500";
@@ -590,33 +591,39 @@
 			#size-cells = <0>;
 
 			led_wifi5g: led@6 {
-				label = "white:wlan5g";
+				color = <LED_COLOR_ID_WHITE>;
+				function = LED_FUNCTION_WLAN_5GHZ;
 				reg = <0x6>;
 			};
 
 			led_wifi2g: led@a {
-				label = "white:wlan2g";
+				color = <LED_COLOR_ID_WHITE>;
+				function = LED_FUNCTION_WLAN_2GHZ;
 				reg = <0xa>;
 			};
 
 			led_wan: led@b {
-				label = "white:wan";
+				color = <LED_COLOR_ID_WHITE>;
+				function = LED_FUNCTION_WAN;
 				reg = <0xb>;
 			};
 
 			led_red: led@d {
-				label = "red:status";
+				color = <LED_COLOR_ID_RED>;
+				function = LED_FUNCTION_STATUS;
 				reg = <0xd>;
 			};
 
 			led_blue: led@e {
-				label = "blue:status";
+				color = <LED_COLOR_ID_BLUE>;
+				function = LED_FUNCTION_STATUS;
 				reg = <0xe>;
 				default-state = "on";
 			};
 
 			led_green: led@f {
-				label = "green:status";
+				color = <LED_COLOR_ID_GREEN>;
+				function = LED_FUNCTION_STATUS;
 				reg = <0xf>;
 			};
 		};

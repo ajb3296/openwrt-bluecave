@@ -3,10 +3,14 @@
 
 START=19
 
-boot() {
+start() {
 	[ -f /lib/firmware/wav500/ap_upper_gen5b_wrx_500.bin ] || return 0
 
-	for dev in /sys/bus/pci/devices/0000:01:00.0 /sys/bus/pci/devices/0001:03:00.0; do
-		[ -w "$dev/fw_boot" ] && echo 1 > "$dev/fw_boot"
+	for fw_boot in /sys/bus/pci/drivers/wav500/*/fw_boot; do
+		[ -w "$fw_boot" ] && echo 1 > "$fw_boot"
 	done
+}
+
+boot() {
+	start
 }
