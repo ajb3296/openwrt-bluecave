@@ -1,0 +1,12 @@
+#!/bin/sh /etc/rc.common
+# SPDX-License-Identifier: GPL-2.0-only
+
+START=19
+
+boot() {
+	[ -f /lib/firmware/wav500/ap_upper_gen5b_wrx_500.bin ] || return 0
+
+	for dev in /sys/bus/pci/devices/0000:01:00.0 /sys/bus/pci/devices/0001:03:00.0; do
+		[ -w "$dev/fw_boot" ] && echo 1 > "$dev/fw_boot"
+	done
+}

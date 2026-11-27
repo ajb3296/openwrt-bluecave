@@ -1,12 +1,34 @@
 # SPDX-License-Identifier: GPL-2.0-only
 
+. /lib/functions.sh
 . /lib/functions/uci-defaults.sh
+. /lib/functions/system.sh
 
 board_config_update
+
+bluecave_get_mac() {
+	local mac
+
+	# U-Boot passes ethaddr=XX:XX:XX:XX:XX:XX on kernel cmdline
+	mac=$(sed -n 's/.*ethaddr=\([0-9a-fA-F:]*\).*/\1/p' /proc/cmdline)
+	[ -n "$mac" ] && { echo "$mac"; return 0; }
+
+	# Fallback to U-Boot environment MTD partitions
+	mac=$(mtd_get_mac_ascii ubootconfigA ethaddr 2>/dev/null)
+	[ -n "$mac" ] && { echo "$mac"; return 0; }
+
+	mac=$(mtd_get_mac_ascii ubootconfigB ethaddr 2>/dev/null)
+	[ -n "$mac" ] && echo "$mac"
+}
 
 case "$(board_name)" in
 asus,blue-cave)
 	ucidef_set_interfaces_lan_wan "lan1 lan2 lan3 lan4" "wan"
+	lan_mac=$(bluecave_get_mac)
+	if [ -n "$lan_mac" ]; then
+		ucidef_set_interface_macaddr "lan" "$lan_mac"
+		ucidef_set_interface_macaddr "wan" "$(macaddr_add "$lan_mac" 1)"
+	fi
 	;;
 *)
 	ucidef_set_interfaces_lan_wan "lan1 lan2 lan3 lan4" "wan"

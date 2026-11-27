@@ -1,0 +1,27 @@
+--- a/drivers/leds/Kconfig
++++ b/drivers/leds/Kconfig
+@@ -1028,6 +1028,13 @@ config LEDS_ACER_A500
+ 	  This option enables support for the Power Button LED of
+ 	  Acer Iconia Tab A500.
+ 
++config LEDS_XRX500_SSO
++	tristate "LED Support for Intel/Lantiq xRX500 Serial Shift Output"
++	depends on LEDS_CLASS && OF
++	help
++	  This option enables support for LEDs connected to the Serial Shift
++	  Output (SSO) controller on Intel/Lantiq GRX350/GRX500 (xRX500) SoCs.
++
+ source "drivers/leds/blink/Kconfig"
+ 
+ comment "Flash and Torch LED drivers"
+--- a/drivers/leds/Makefile
++++ b/drivers/leds/Makefile
+@@ -111,6 +111,8 @@ obj-$(CONFIG_LEDS_TURRIS_OMNIA)		+= leds-turris-omnia.o
+ obj-$(CONFIG_LEDS_WM831X_STATUS)	+= leds-wm831x-status.o
+ obj-$(CONFIG_LEDS_WM8350)		+= leds-wm8350.o
+ 
++obj-$(CONFIG_LEDS_XRX500_SSO)		+= leds-xrx500-sso.o
++
+ # Flash and Torch LED Drivers
+ obj-$(CONFIG_LEDS_CLASS_FLASH)		+= flash/
+ 

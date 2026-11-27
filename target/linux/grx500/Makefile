@@ -10,6 +10,12 @@ CPU_TYPE:=24kc
 
 KERNEL_PATCHVER:=6.18
 
+DEFAULT_PACKAGES += \
+	iw \
+	wifi-scripts \
+	wireless-regdb \
+	wpad-basic-mbedtls
+
 include $(INCLUDE_DIR)/target.mk
 
 KERNELNAME:=vmlinux

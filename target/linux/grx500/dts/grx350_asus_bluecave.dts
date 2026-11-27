@@ -27,6 +27,10 @@
 		dma5 = &dma3;
 		pcie0 = &pcie0;
 		pcie1 = &pcie1;
+		led-boot = &led_blue;
+		led-failsafe = &led_red;
+		led-running = &led_blue;
+		led-upgrade = &led_green;
 	};
 
 	chosen {
@@ -576,6 +580,45 @@
 			interrupt-parent = <&gic>;
 			interrupts = <GIC_SHARED 173 IRQ_TYPE_LEVEL_HIGH>;
 			lantiq,bank = <1>;
+		};
+
+		sso: sso@d00000 {
+			compatible = "lantiq,gpio-sso-xrx500";
+			reg = <0xd00000 0x1000>;
+			lantiq,groups = <0x3>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			led_wifi5g: led@6 {
+				label = "white:wlan5g";
+				reg = <0x6>;
+			};
+
+			led_wifi2g: led@a {
+				label = "white:wlan2g";
+				reg = <0xa>;
+			};
+
+			led_wan: led@b {
+				label = "white:wan";
+				reg = <0xb>;
+			};
+
+			led_red: led@d {
+				label = "red:status";
+				reg = <0xd>;
+			};
+
+			led_blue: led@e {
+				label = "blue:status";
+				reg = <0xe>;
+				default-state = "on";
+			};
+
+			led_green: led@f {
+				label = "green:status";
+				reg = <0xf>;
+			};
 		};
 
 		nand@1c00000 {

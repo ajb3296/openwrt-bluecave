@@ -174,6 +174,8 @@ static const struct net_device_ops wav500_netdev_ops = {
 	.ndo_open = wav500_ndo_open,
 	.ndo_stop = wav500_ndo_stop,
 	.ndo_start_xmit = wav500_ndo_start_xmit,
+	.ndo_set_mac_address = eth_mac_addr,
+	.ndo_validate_addr = eth_validate_addr,
 };
 
 static u8 wav500_nl_width_to_umi(enum nl80211_chan_width w)
