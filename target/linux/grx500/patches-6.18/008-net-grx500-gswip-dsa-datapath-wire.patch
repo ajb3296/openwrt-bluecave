@@ -1,0 +1,100 @@
+From: Blue Cave OpenWrt Bringup
+Subject: [PATCH] net: wire GRX500 GSWIP MDIO, CBM/DMA datapath, DSA switch, and PMAC tag
+
+--- a/drivers/net/mdio/Kconfig
++++ b/drivers/net/mdio/Kconfig
+@@ -1,4 +1,11 @@
+ # SPDX-License-Identifier: GPL-2.0-only
++config MDIO_GRX500_GSWIP
++	tristate "GRX500 GSWIP MDIO controller"
++	depends on OF_MDIO && MIPS
++	select DECOMPRESS_LZMA
++	help
++	  Expose the GSWIP 3.0 MDIO controllers on GRX500.
++
+ #
+ # MDIO Layer Configuration
+ #
+--- a/drivers/net/mdio/Makefile
++++ b/drivers/net/mdio/Makefile
+@@ -1,4 +1,5 @@
+ # SPDX-License-Identifier: GPL-2.0
++obj-$(CONFIG_MDIO_GRX500_GSWIP)		+= mdio-grx500.o
+ # Makefile for Linux MDIO bus drivers
+ 
+ obj-$(CONFIG_ACPI_MDIO)		+= acpi_mdio.o
+--- a/drivers/net/ethernet/Kconfig
++++ b/drivers/net/ethernet/Kconfig
+@@ -1,4 +1,20 @@
+ # SPDX-License-Identifier: GPL-2.0-only
++config GRX500_DATAPATH
++	tristate "GRX500 CBM/TMU packet path and DMA"
++	depends on MIPS && OF
++	select PHYLIB
++	select PHYLINK
++	help
++	  GRX500 DMA, GSWIP, PAE, UMT, and CBM/TMU CPU packet path driver.
++
++config GRX500_DSA
++	tristate "GRX500 GSWIP 3.0 DSA switch driver"
++	depends on MIPS && OF && NET_DSA && GRX500_DATAPATH
++	select NET_DSA_TAG_GRX500
++	help
++	  Expose GRX500 GSWIP-L and GSWIP-R ports as standard Linux DSA
++	  user interfaces (lan1-lan4, wan) over the GRX500 CPU conduit.
++
+ #
+ # Ethernet LAN device configuration
+ #
+--- a/drivers/net/ethernet/Makefile
++++ b/drivers/net/ethernet/Makefile
+@@ -1,4 +1,6 @@
+ # SPDX-License-Identifier: GPL-2.0
++obj-$(CONFIG_GRX500_DATAPATH) += grx500-dma.o grx500-gswip.o grx500-pae.o grx500-umt.o grx500-datapath.o
++obj-$(CONFIG_GRX500_DSA) += grx500-dsa.o
+ #
+ # Makefile for the Linux network Ethernet device drivers.
+ #
+--- a/include/net/dsa.h
++++ b/include/net/dsa.h
+@@ -58,6 +58,7 @@
+ #define DSA_TAG_PROTO_YT921X_VALUE		32
+ #define DSA_TAG_PROTO_YT922X_VALUE		33
+ #define DSA_TAG_PROTO_YT922X_4B_VALUE		34
++#define DSA_TAG_PROTO_GRX500_VALUE		35
+ 
+ enum dsa_tag_protocol {
+ 	DSA_TAG_PROTO_NONE		= DSA_TAG_PROTO_NONE_VALUE,
+@@ -95,6 +96,7 @@
+ 	DSA_TAG_PROTO_YT921X		= DSA_TAG_PROTO_YT921X_VALUE,
+ 	DSA_TAG_PROTO_YT922X		= DSA_TAG_PROTO_YT922X_VALUE,
+ 	DSA_TAG_PROTO_YT922X_4B		= DSA_TAG_PROTO_YT922X_4B_VALUE,
++	DSA_TAG_PROTO_GRX500		= DSA_TAG_PROTO_GRX500_VALUE,
+ };
+ 
+ struct dsa_switch;
+--- a/net/dsa/Kconfig
++++ b/net/dsa/Kconfig
+@@ -69,6 +69,12 @@
+ 	  Broadcom switches which places the tag before the Ethernet header
+ 	  (prepended).
+ 
++config NET_DSA_TAG_GRX500
++	tristate "Tag driver for GRX500 GSWIP 3.0 switches"
++	help
++	  Say Y or M if you want to enable support for 8-byte PMAC tagging
++	  frames for Intel / Lantiq GRX500 GSWIP 3.0 switches.
++
+ config NET_DSA_TAG_HELLCREEK
+ 	tristate "Tag driver for Hirschmann Hellcreek TSN switches"
+ 	help
+--- a/net/dsa/Makefile
++++ b/net/dsa/Makefile
+@@ -24,6 +24,7 @@
+ obj-$(CONFIG_NET_DSA_TAG_BRCM_COMMON) += tag_brcm.o
+ obj-$(CONFIG_NET_DSA_TAG_DSA_COMMON) += tag_dsa.o
+ obj-$(CONFIG_NET_DSA_TAG_GSWIP) += tag_gswip.o
++obj-$(CONFIG_NET_DSA_TAG_GRX500) += tag_grx500.o
+ obj-$(CONFIG_NET_DSA_TAG_HELLCREEK) += tag_hellcreek.o
+ obj-$(CONFIG_NET_DSA_TAG_KSZ) += tag_ksz.o
+ obj-$(CONFIG_NET_DSA_TAG_LAN9303) += tag_lan9303.o

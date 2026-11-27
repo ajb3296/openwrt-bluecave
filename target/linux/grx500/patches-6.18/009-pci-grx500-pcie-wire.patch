@@ -1,0 +1,31 @@
+From: Blue Cave OpenWrt Bringup
+Subject: [PATCH] mips: pci: wire GRX500 PCIe Root Complex controller
+
+--- a/arch/mips/pci/Makefile
++++ b/arch/mips/pci/Makefile
+@@ -5,7 +5,10 @@
+ 
+ obj-y				+= pci.o
+ obj-$(CONFIG_PCI_DRIVERS_LEGACY)+= pci-legacy.o
++obj-$(CONFIG_PCIE_GRX500)	+= pcie-xrx500.o
++ifndef CONFIG_PCI_DRIVERS_LEGACY
+ obj-$(CONFIG_PCI_DRIVERS_GENERIC)+= pci-generic.o
++endif
+ 
+ #
+ # PCI bus host bridge specific code
+--- a/arch/mips/Kconfig
++++ b/arch/mips/Kconfig
+@@ -3156,3 +3165,12 @@
+ source "arch/mips/kvm/Kconfig"
+ 
+ source "arch/mips/vdso/Kconfig"
++
++config PCIE_GRX500
++	bool "GRX500 PCIe Root Complex support"
++	depends on MIPS_GENERIC_KERNEL && PCI
++	select PCIEPORTBUS
++	select PCI_DRIVERS_LEGACY
++	help
++	  Enable GRX350/GRX500 PCIe Root Complex controller driver.
++

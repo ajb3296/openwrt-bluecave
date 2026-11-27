@@ -1,0 +1,37 @@
+From: Blue Cave OpenWrt Bringup
+Subject: [PATCH] mips: grx500: fix vDSO GIC PFN, noncoherent DMA, and module_free under EVA
+
+--- a/arch/mips/kernel/vdso.c
++++ b/arch/mips/kernel/vdso.c
+@@ -145,7 +145,7 @@
+ 	/* Map GIC user page. */
+ 	if (gic_size) {
+ 		gic_base = (unsigned long)mips_gic_base + MIPS_GIC_USER_OFS;
+-		gic_pfn = PFN_DOWN(__pa(gic_base));
++		gic_pfn = PFN_DOWN(CPHYSADDR(gic_base));
+ 		static const struct vm_special_mapping gic_mapping = {
+ 			.name	= "[gic]",
+ 			.pages	= (struct page **) { NULL },
+--- a/arch/mips/mm/dma-noncoherent.c
++++ b/arch/mips/mm/dma-noncoherent.c
+@@ -51,7 +51,7 @@
+ 
+ void *arch_dma_set_uncached(void *addr, size_t size)
+ {
+-	return (void *)(__pa(addr) + UNCAC_BASE);
++	return (void *)(__pa(addr) - PHYS_OFFSET + UNCAC_BASE);
+ }
+ 
+ static inline void dma_sync_virt_for_device(void *addr, size_t size,
+--- a/arch/mips/kernel/module.c
++++ b/arch/mips/kernel/module.c
+@@ -221,6 +221,9 @@
+ {
+ #ifdef CONFIG_64BIT
+ 	return (KSEGX((unsigned long)ptr) == CKSEG0);
++#elif defined(CONFIG_EVA)
++	return ((unsigned long)ptr >= PAGE_OFFSET &&
++		(unsigned long)ptr < (unsigned long)high_memory);
+ #else
+ 	return (KSEGX(ptr) == KSEG0);
+ #endif

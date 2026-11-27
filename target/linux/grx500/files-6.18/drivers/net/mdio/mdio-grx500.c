@@ -1,0 +1,439 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/* GRX500 GSWIP 3.0 MDIO controller and internal GPHY firmware loader. */
+#include <linux/bitops.h>
+#include <linux/decompress/unlzma.h>
+#include <linux/delay.h>
+#include <linux/dma-mapping.h>
+#include <linux/errno.h>
+#include <linux/firmware.h>
+#include <linux/io.h>
+#include <linux/iopoll.h>
+#include <linux/mdio.h>
+#include <linux/module.h>
+#include <linux/mtd/mtd.h>
+#include <linux/of.h>
+#include <linux/of_mdio.h>
+#include <linux/platform_device.h>
+#include <linux/phy.h>
+#include <linux/reset.h>
+#include <linux/slab.h>
+
+/* Vendor GSWIP 3.0 register numbers are 32-bit word offsets. */
+#define GRX500_GSW_TOP                  0xf00
+#define GRX500_MDCTRL                   ((GRX500_GSW_TOP + 0x004) * 4)
+#define GRX500_MDREAD                   ((GRX500_GSW_TOP + 0x005) * 4)
+#define GRX500_MDWRITE                  ((GRX500_GSW_TOP + 0x006) * 4)
+#define GRX500_MDCTRL_BUSY              BIT(12)
+#define GRX500_MDCTRL_READ              (2 << 10)
+#define GRX500_MDCTRL_WRITE             (1 << 10)
+#define GRX500_GPHY_FW_SIZE             65536
+#define GRX500_GPHY_ALIGN               16384
+#define GRX500_GSWT_MDCCFG_0            (GRX500_GSW_TOP + 0x007)
+#define GRX500_GSWT_MDCCFG_1            (GRX500_GSW_TOP + 0x008)
+#define GRX500_GSWT_MDCCFG_1_RES        BIT(15)
+#define GRX500_GSWT_MDCCFG_1_MCEN       BIT(8)
+#define GRX500_GSWT_MDCCFG_1_FREQ_97KHZ 0xff
+#define GRX500_GSWT_ANEG_EEE(port)      (GRX500_GSW_TOP + 0x046 + 4 * ((port) - 1))
+#define GRX500_GSWT_ANEG_EEE_CLK_STOP   GENMASK(3, 2)
+
+static const u16 grx500_gphy_bootreg[] = {
+	0x0228, 0x0238, 0x0248, 0x0258, 0x0268,
+};
+static bool grx500_gphy_ready;
+
+static u32 grx500_gswip_read(void __iomem *base, u16 word)
+{
+	u32 val = __raw_readl(base + (u32)word * 4);
+
+	rmb();
+	return val;
+}
+
+static void grx500_gswip_write(void __iomem *base, u16 word, u32 value)
+{
+	wmb();
+	__raw_writel(value, base + (u32)word * 4);
+}
+
+static void grx500_gswip_update_bits(void __iomem *base, u16 word,
+				     u32 mask, u32 value)
+{
+	u32 old = grx500_gswip_read(base, word);
+
+	grx500_gswip_write(base, word, (old & ~mask) | (value & mask));
+}
+
+struct grx500_gphy_mem {
+	struct device *dev;
+	void *cpu;
+	dma_addr_t dma;
+};
+
+static void grx500_gphy_free(void *data)
+{
+	struct grx500_gphy_mem *mem = data;
+
+	dma_unmap_single(mem->dev, mem->dma, GRX500_GPHY_FW_SIZE,
+			 DMA_TO_DEVICE);
+	kfree(mem->cpu);
+}
+
+static int grx500_gphy_load_from_mtd(struct device *dev, const char *mtd_name,
+				     void *dst)
+{
+	struct mtd_info *mtd;
+	u8 *raw = NULL, *dec = NULL;
+	size_t retlen = 0, src_off, src_len;
+	u32 magic, ih_size, inner_magic, inner_size;
+	u8 ih_type;
+	int ret;
+
+	mtd = get_mtd_device_nm(mtd_name);
+	if (IS_ERR(mtd)) {
+		ret = PTR_ERR(mtd);
+		if (ret == -ENODEV)
+			return -EPROBE_DEFER;
+		return ret;
+	}
+
+	raw = kmalloc(GRX500_GPHY_FW_SIZE, GFP_KERNEL);
+	dec = kmalloc(GRX500_GPHY_FW_SIZE + 4096, GFP_KERNEL);
+	if (!raw || !dec) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	ret = mtd_read(mtd, 0, GRX500_GPHY_FW_SIZE, &retlen, raw);
+	if (ret && !mtd_is_bitflip(ret))
+		goto out;
+	if (retlen < 128) {
+		ret = -EINVAL;
+		goto out;
+	}
+
+	magic = be32_to_cpup((__be32 *)raw);
+	if (magic != 0x27051956) {
+		/* Raw 64 KiB binary without U-Boot header */
+		memcpy(dst, raw, GRX500_GPHY_FW_SIZE);
+		ret = 0;
+		goto out;
+	}
+
+	ih_size = be32_to_cpup((__be32 *)(raw + 12));
+	ih_type = raw[30];
+	src_off = 64;
+	src_len = ih_size;
+	if (ih_type == 4) {
+		/* U-Boot multi-file image: skip size table ending in 0 */
+		u32 part_len = be32_to_cpup((__be32 *)(raw + 64));
+		while (src_off + 4 <= retlen &&
+		       be32_to_cpup((__be32 *)(raw + src_off)) != 0)
+			src_off += 4;
+		src_off += 4;
+		if (part_len && part_len <= retlen - src_off)
+			src_len = part_len;
+	}
+	if (src_off + src_len > retlen) {
+		ret = -EINVAL;
+		goto out;
+	}
+
+	ret = unlzma(raw + src_off, src_len, NULL, NULL, dec, NULL, NULL);
+	if (ret) {
+		dev_err(dev, "GPHY MTD '%s' LZMA decompress failed (%d)\n",
+			mtd_name, ret);
+		ret = -EINVAL;
+		goto out;
+	}
+
+	inner_magic = be32_to_cpup((__be32 *)dec);
+	inner_size = be32_to_cpup((__be32 *)(dec + 12));
+	if (inner_magic == 0x27051956 && inner_size == GRX500_GPHY_FW_SIZE) {
+		memcpy(dst, dec + 64, GRX500_GPHY_FW_SIZE);
+		dev_info(dev, "loaded GPHY firmware '%.32s' (%u B) from MTD '%s'\n",
+			 dec + 32, inner_size, mtd_name);
+	} else {
+		memcpy(dst, dec, GRX500_GPHY_FW_SIZE);
+		dev_info(dev, "loaded raw GPHY firmware from MTD '%s'\n", mtd_name);
+	}
+	ret = 0;
+
+out:
+	kfree(dec);
+	kfree(raw);
+	put_mtd_device(mtd);
+	return ret;
+}
+
+static int grx500_gphy_boot(struct platform_device *pdev, void __iomem *base)
+{
+	static const u32 gphy_rcu_bits[5] = { 29, 28, 26, 25, 31 };
+	struct grx500_gphy_mem *mem;
+	const struct firmware *fw = NULL;
+	const char *name = NULL, *mtd_name = NULL;
+	void __iomem *rcu_rst = NULL;
+	dma_addr_t entry;
+	unsigned int i;
+	void *fw_cpu;
+	int ret;
+
+	of_property_read_string(pdev->dev.of_node, "lantiq,gphy-mtd", &mtd_name);
+	of_property_read_string(pdev->dev.of_node, "firmware-name", &name);
+	if (!mtd_name && !name) {
+		WRITE_ONCE(grx500_gphy_ready, true);
+		return 0;
+	}
+
+	mem = devm_kzalloc(&pdev->dev, sizeof(*mem), GFP_KERNEL);
+	if (!mem)
+		return -ENOMEM;
+	mem->dev = &pdev->dev;
+	mem->cpu = kmalloc(GRX500_GPHY_FW_SIZE + GRX500_GPHY_ALIGN, GFP_KERNEL);
+	if (!mem->cpu)
+		return -ENOMEM;
+	fw_cpu = PTR_ALIGN(mem->cpu, GRX500_GPHY_ALIGN);
+
+	if (mtd_name) {
+		ret = grx500_gphy_load_from_mtd(&pdev->dev, mtd_name, fw_cpu);
+		if (ret) {
+			kfree(mem->cpu);
+			return ret;
+		}
+	} else {
+		ret = request_firmware(&fw, name, &pdev->dev);
+		if (ret) {
+			kfree(mem->cpu);
+			return dev_err_probe(&pdev->dev, ret,
+					     "GPHY firmware unavailable\n");
+		}
+		if (fw->size != GRX500_GPHY_FW_SIZE) {
+			dev_err(&pdev->dev, "GPHY firmware size %zu is not 65536\n",
+				fw->size);
+			release_firmware(fw);
+			kfree(mem->cpu);
+			return -EINVAL;
+		}
+		memcpy(fw_cpu, fw->data, fw->size);
+		release_firmware(fw);
+	}
+
+	mem->dma = dma_map_single(&pdev->dev, fw_cpu, GRX500_GPHY_FW_SIZE,
+				  DMA_TO_DEVICE);
+	if (dma_mapping_error(&pdev->dev, mem->dma)) {
+		kfree(mem->cpu);
+		return -EIO;
+	}
+	ret = devm_add_action_or_reset(&pdev->dev, grx500_gphy_free, mem);
+	if (ret)
+		return ret;
+	entry = mem->dma;
+	if (entry > U32_MAX || !IS_ALIGNED(entry, GRX500_GPHY_ALIGN)) {
+		dev_err(&pdev->dev, "GPHY DMA address %pad is not 16 KiB aligned below 4 GiB\n",
+			&entry);
+		return -ERANGE;
+	}
+
+	rcu_rst = ioremap(0x16000010, 4);
+	for (i = 0; i < ARRAY_SIZE(grx500_gphy_bootreg); i++) {
+		struct reset_control *reset;
+		char reset_name[8];
+		u16 offset = grx500_gphy_bootreg[i];
+
+		snprintf(reset_name, sizeof(reset_name), "phy%u", i);
+		reset = devm_reset_control_get_optional_exclusive(&pdev->dev, reset_name);
+		if (IS_ERR(reset)) {
+			if (rcu_rst)
+				iounmap(rcu_rst);
+			return dev_err_probe(&pdev->dev, PTR_ERR(reset),
+					     "missing GPHY reset\n");
+		}
+		if (reset) {
+			ret = reset_control_assert(reset);
+			if (ret)
+				return ret;
+		} else if (rcu_rst) {
+			u32 v = __raw_readl(rcu_rst);
+			__raw_writel(v | BIT(gphy_rcu_bits[i]), rcu_rst);
+			wmb();
+			udelay(10);
+		}
+		__raw_writel(entry & 0xffff, base + 0x3c00 + offset);
+		__raw_writel(entry >> 16, base + 0x3c00 + offset + 4);
+		wmb();
+		if (reset) {
+			ret = reset_control_deassert(reset);
+			if (ret)
+				return ret;
+		} else if (rcu_rst) {
+			u32 v = __raw_readl(rcu_rst);
+			__raw_writel(v & ~BIT(gphy_rcu_bits[i]), rcu_rst);
+			wmb();
+		}
+		msleep(100);
+		dev_info(&pdev->dev, "GPHY%u booted from DMA address %pad\n",
+			 i, &entry);
+	}
+	if (rcu_rst)
+		iounmap(rcu_rst);
+	WRITE_ONCE(grx500_gphy_ready, true);
+	return 0;
+}
+
+static int grx500_mdio_wait(struct mii_bus *bus, const char *op, int phy, int reg)
+{
+	void __iomem *base = bus->priv;
+	u32 val;
+	int ret;
+
+	ret = read_poll_timeout(__raw_readl, val,
+				!(val & GRX500_MDCTRL_BUSY),
+				20, 100000, false,
+				base + GRX500_MDCTRL);
+	if (ret)
+		dev_err(&bus->dev,
+			"MDIO %s timeout phy=%d reg=0x%02x mdctrl=0x%08x mdccfg1=0x%08x\n",
+			op, phy, reg, __raw_readl(base + GRX500_MDCTRL),
+			grx500_gswip_read(base, GRX500_GSWT_MDCCFG_1));
+	return ret;
+}
+
+static int grx500_mdio_read(struct mii_bus *bus, int phy, int reg)
+{
+	void __iomem *base = bus->priv;
+	int ret;
+
+	if (phy < 0 || phy > 31 || reg < 0 || reg > 31)
+		return -EINVAL;
+	ret = grx500_mdio_wait(bus, "read-pre", phy, reg);
+	if (ret)
+		return ret;
+	__raw_writel(GRX500_MDCTRL_READ | (phy << 5) | reg,
+		     base + GRX500_MDCTRL);
+	wmb();
+	(void)__raw_readl(base + GRX500_MDCTRL);
+	/* MDC runs at 97.6 kHz (10.24 us/cycle); wait >1 cycle for BUSY to latch. */
+	udelay(12);
+	ret = grx500_mdio_wait(bus, "read-post", phy, reg);
+	if (ret)
+		return ret;
+	rmb();
+	return __raw_readl(base + GRX500_MDREAD) & 0xffff;
+}
+
+static int grx500_mdio_write(struct mii_bus *bus, int phy, int reg, u16 val)
+{
+	void __iomem *base = bus->priv;
+	int ret;
+
+	if (phy < 0 || phy > 31 || reg < 0 || reg > 31)
+		return -EINVAL;
+	ret = grx500_mdio_wait(bus, "write-pre", phy, reg);
+	if (ret)
+		return ret;
+	__raw_writel(val, base + GRX500_MDWRITE);
+	wmb();
+	__raw_writel(GRX500_MDCTRL_WRITE | (phy << 5) | reg,
+		     base + GRX500_MDCTRL);
+	wmb();
+	(void)__raw_readl(base + GRX500_MDCTRL);
+	udelay(12);
+	return grx500_mdio_wait(bus, "write-post", phy, reg);
+}
+
+static void grx500_mdio_hw_init(void __iomem *base, bool right)
+{
+	u8 max_port = right ? 1 : 5;
+	u8 port;
+
+	/* Disable hardware MDIO auto-polling left enabled by bootloader; Linux
+	 * phylib owns PHY polling and updates switch MAC link state manually.
+	 */
+	grx500_gswip_write(base, GRX500_GSWT_MDCCFG_0, 0);
+
+	/* Match GSWIP 3.0 MDIO clock (97.6 kHz), enable MDC, and reset block. */
+	grx500_gswip_write(base, GRX500_GSWT_MDCCFG_1,
+			   GRX500_GSWT_MDCCFG_1_MCEN |
+			   GRX500_GSWT_MDCCFG_1_FREQ_97KHZ);
+	grx500_gswip_update_bits(base, GRX500_GSWT_MDCCFG_1,
+				 GRX500_GSWT_MDCCFG_1_RES,
+				 GRX500_GSWT_MDCCFG_1_RES);
+
+	/* Override EEE clock-stop capability on all external switch ports. */
+	for (port = 1; port <= max_port; port++)
+		grx500_gswip_update_bits(base, GRX500_GSWT_ANEG_EEE(port),
+					 GRX500_GSWT_ANEG_EEE_CLK_STOP,
+					 GRX500_GSWT_ANEG_EEE_CLK_STOP);
+}
+
+static int grx500_mdio_probe(struct platform_device *pdev)
+{
+	struct mii_bus *bus;
+	void __iomem *base;
+	bool right;
+	int ret;
+
+	base = devm_platform_ioremap_resource(pdev, 0);
+	if (IS_ERR(base))
+		return PTR_ERR(base);
+	right = of_property_read_bool(pdev->dev.of_node,
+				      "lantiq,wait-for-gphy");
+	if (right && !READ_ONCE(grx500_gphy_ready))
+		return -EPROBE_DEFER;
+	ret = grx500_gphy_boot(pdev, base);
+	if (ret)
+		return ret;
+	/* Reset GSWIP 3.0 switch fabric (ETHSW_SWRES_R0) so warm reboots start
+	 * with clean BM/SDMA/FDMA/MAC TX FIFOs and never stall DMA2TX.
+	 */
+	grx500_gswip_update_bits(base, 0x000, BIT(0), BIT(0));
+	{
+		u32 swres;
+
+		if (read_poll_timeout(grx500_gswip_read, swres, !(swres & BIT(0)),
+				      10, 50000, false, base, 0x000))
+			dev_warn(&pdev->dev, "GSWIP SWRES timeout (0x%04x)\n", swres);
+		else
+			dev_info(&pdev->dev, "GSWIP 3.0 hardware software-reset done\n");
+	}
+	grx500_mdio_hw_init(base, right);
+	bus = devm_mdiobus_alloc(&pdev->dev);
+	if (!bus)
+		return -ENOMEM;
+	bus->name = "GRX500 GSWIP MDIO";
+	bus->read = grx500_mdio_read;
+	bus->write = grx500_mdio_write;
+	bus->priv = base;
+	bus->parent = &pdev->dev;
+	snprintf(bus->id, MII_BUS_ID_SIZE, "%s", dev_name(&pdev->dev));
+
+	ret = of_mdiobus_register(bus, pdev->dev.of_node);
+	if (ret)
+		return dev_err_probe(&pdev->dev, ret, "failed to register MDIO bus\n");
+	platform_set_drvdata(pdev, bus);
+	dev_info(&pdev->dev, "GRX500 GSWIP MDIO bus registered\n");
+	return 0;
+}
+
+static void grx500_mdio_remove(struct platform_device *pdev)
+{
+	mdiobus_unregister(platform_get_drvdata(pdev));
+}
+
+static const struct of_device_id grx500_mdio_of_match[] = {
+	{ .compatible = "lantiq,grx500-gswip-mdio" },
+	{ }
+};
+MODULE_DEVICE_TABLE(of, grx500_mdio_of_match);
+
+static struct platform_driver grx500_mdio_driver = {
+	.probe = grx500_mdio_probe,
+	.remove = grx500_mdio_remove,
+	.driver = {
+		.name = "grx500-gswip-mdio",
+		.of_match_table = grx500_mdio_of_match,
+	},
+};
+module_platform_driver(grx500_mdio_driver);
+
+MODULE_LICENSE("GPL");
+MODULE_DESCRIPTION("GRX500 GSWIP 3.0 MDIO controller");

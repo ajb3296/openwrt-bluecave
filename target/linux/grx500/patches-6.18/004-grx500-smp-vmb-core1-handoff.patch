@@ -1,0 +1,106 @@
+From: Blue Cave OpenWrt Bringup
+Subject: [PATCH] mips: grx500: preserve firmware VMB IPIs and bring up Core 1 via VMB handoff
+
+--- a/drivers/irqchip/irq-mips-gic.c
++++ b/drivers/irqchip/irq-mips-gic.c
+@@ -992,6 +992,9 @@
+ 	for (cl = 0; cl < nclusters; cl++) {
+ 		if (cl == cpu_cluster(&current_cpu_data)) {
+ 			for (i = 0; i < gic_shared_intrs; i++) {
++				/* Preserve GRX350/GRX500 IBL/VMB IPI channels for Core 1 handoff */
++				if (i == 20 || i == 21 || i == 85)
++					continue;
+ 				change_gic_pol(i, GIC_POL_ACTIVE_HIGH);
+ 				change_gic_trig(i, GIC_TRIG_LEVEL);
+ 				write_gic_rmask(i);
+--- a/arch/mips/kernel/smp-cps.c
++++ b/arch/mips/kernel/smp-cps.c
+@@ -154,12 +154,13 @@
+ 
+ static int __init allocate_cps_vecs(void)
+ {
+-	/* Try to allocate in KSEG1 first */
++	/* Try to allocate in KSEG1 first (relative to PHYS_OFFSET for GRX500) */
+ 	cps_vec_pa = memblock_phys_alloc_range(BEV_VEC_SIZE, BEV_VEC_ALIGN,
+-						0x0, CSEGX_SIZE - 1);
++						PHYS_OFFSET,
++						PHYS_OFFSET + CSEGX_SIZE - 1);
+ 
+ 	if (cps_vec_pa)
+-		core_entry_reg = CKSEG1ADDR(cps_vec_pa) &
++		core_entry_reg = CKSEG1ADDR(cps_vec_pa - PHYS_OFFSET) &
+ 					CM_GCR_Cx_RESET_BASE_BEVEXCBASE;
+ 
+ 	if (!cps_vec_pa && mips_cm_is64) {
+@@ -192,7 +193,7 @@
+ {
+ 	void *cps_vec;
+ 
+-	cps_vec = (void *)CKSEG1ADDR_OR_64BIT(cps_vec_pa);
++	cps_vec = (void *)CKSEG1ADDR_OR_64BIT(cps_vec_pa - PHYS_OFFSET);
+ 	mips_cps_build_core_entry(cps_vec);
+ 
+ 	memcpy(cps_vec + 0x200, &excep_tlbfill, 0x80);
+@@ -617,6 +618,43 @@
+ 	mips_cps_boot_vpes(core_cfg, cpu_vpe_id(&current_cpu_data));
+ }
+ 
++static bool grx500_vmb_ready(unsigned int cpu)
++{
++	return cpu < 4 && __raw_readl((void __iomem *)(0xa0000000UL + cpu * 176)) == 8;
++}
++
++static int grx500_vmb_launch(unsigned int cpu, unsigned long pc,
++			     unsigned long sp, unsigned long gp)
++{
++	void __iomem *command;
++	unsigned int word, intr = cpu == 2 ? 21 : 85;
++
++	if ((cpu != 2 && cpu != 3) || !mips_gic_base || !grx500_vmb_ready(cpu))
++		return -ENODEV;
++
++	if (read_gic_map_vp(intr) != BIT(cpu)) {
++		pr_err("GRX500 IPI%u: refusing launch; route=0x%lx != VP%u\n",
++		       intr, (unsigned long)read_gic_map_vp(intr), cpu);
++		return -ENODEV;
++	}
++
++	command = (void __iomem *)(0xa0000000UL + cpu * 176 + 8);
++	for (word = 0; word < 42; word++)
++		__raw_writel(0, command + word * 4);
++
++	__raw_writel(CKSEG1ADDR(__pa_symbol((void *)pc) - PHYS_OFFSET), command + 4);
++	__raw_writel(sp, command + 8);
++	__raw_writel(gp, command + 12);
++	wmb();
++	__raw_writel(1, command); /* VMB_CPU_START */
++	wmb();
++	write_gic_smask(intr);
++	wmb();
++	write_gic_wedge(GIC_WEDGE_RW | intr);
++	wmb();
++	return 0;
++}
++
+ static int cps_boot_secondary(int cpu, struct task_struct *idle)
+ {
+ 	unsigned int cluster = cpu_cluster(&cpu_data[cpu]);
+@@ -637,6 +675,18 @@
+ 
+ 	preempt_disable();
+ 
++	if (core == 1) {
++		if ((cpu != 2 && cpu != 3) || (cpu == 3 && !cpu_online(2))) {
++			err = -ENODEV;
++		} else {
++			pr_info("GRX500 CPS: CPU%d using firmware VMB handoff\n", cpu);
++			err = grx500_vmb_launch(cpu, vpe_cfg->pc,
++						vpe_cfg->sp, vpe_cfg->gp);
++		}
++		preempt_enable();
++		return err;
++	}
++
+ 	if (!test_bit(core, cluster_cfg->core_power)) {
+ 		/* Boot a VPE on a powered down core */
+ 		boot_core(cluster, core, vpe_id);

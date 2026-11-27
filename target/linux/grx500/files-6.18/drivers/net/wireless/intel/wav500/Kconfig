@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config WAV500_WIFI
+	tristate "Intel/Lantiq WAV500 (gen5b) clean-room cfg80211 Wi-Fi driver"
+	depends on PCI && CFG80211
+	help
+	  Clean-room GPL-2.0 cfg80211 FullMAC driver for Intel/Lantiq WAV514/524
+	  (gen5b, PCI ID 1bef:0810) Wi-Fi radios on GRX350/GRX500 platforms.

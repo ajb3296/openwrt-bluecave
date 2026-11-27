@@ -1,0 +1,18 @@
+From: Blue Cave Bringup <bringup@localhost>
+Subject: [PATCH] serial: lantiq: allow building on MIPS_GENERIC
+
+Allow selecting SERIAL_LANTIQ on MIPS_GENERIC kernels so GRX350/GRX500
+boards booted via arch/mips/generic can use the mainline Lantiq ASC UART
+and earlycon driver.
+
+--- a/drivers/tty/serial/Kconfig
++++ b/drivers/tty/serial/Kconfig
+@@ -1002,7 +1002,7 @@ config SERIAL_SIFIVE_CONSOLE
+ 
+ config SERIAL_LANTIQ
+ 	tristate "Lantiq serial driver"
+-	depends on (LANTIQ || X86) || COMPILE_TEST
++	depends on (LANTIQ || MIPS_GENERIC || X86) || COMPILE_TEST
+ 	select SERIAL_CORE
+ 	help
+ 	  Support for UART on Lantiq and Intel SoCs.

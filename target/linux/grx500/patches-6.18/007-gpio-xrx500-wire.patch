@@ -1,0 +1,30 @@
+From: Blue Cave OpenWrt Bringup
+Subject: [PATCH] gpio: wire GRX500/XRX500 GPIO controller driver
+
+--- a/drivers/gpio/Kconfig
++++ b/drivers/gpio/Kconfig
+@@ -473,6 +473,14 @@
+ 	help
+ 	  Say yes here to support the MEN 16Z127 GPIO Controller.
+ 
++config GPIO_XRX500
++	bool "Lantiq GRX500 / XRX500 GPIO support"
++	depends on OF_GPIO && MIPS
++	select GPIOLIB_IRQCHIP
++	help
++	  This enables support for the GPIO controller found on the Lantiq
++	  GRX500 / XRX500 SoCs.
++
+ config GPIO_MM_LANTIQ
+ 	bool "Lantiq Memory mapped GPIOs"
+ 	depends on LANTIQ && SOC_XWAY
+--- a/drivers/gpio/Makefile
++++ b/drivers/gpio/Makefile
+@@ -119,6 +120,7 @@
+ obj-$(CONFIG_GPIO_MLXBF2)		+= gpio-mlxbf2.o
+ obj-$(CONFIG_GPIO_MLXBF3)		+= gpio-mlxbf3.o
+ obj-$(CONFIG_GPIO_MM_LANTIQ)		+= gpio-mm-lantiq.o
++obj-$(CONFIG_GPIO_XRX500)		+= gpio-xrx500.o
+ obj-$(CONFIG_GPIO_MOCKUP)		+= gpio-mockup.o
+ obj-$(CONFIG_GPIO_MOXTET)		+= gpio-moxtet.o
+ obj-$(CONFIG_GPIO_MPC5200)		+= gpio-mpc5200.o

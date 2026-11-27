@@ -341,7 +341,9 @@ ifeq ($(DUMP),1)
       FEATURES += virtio
     endif
     ifneq ($(CONFIG_CPU_MIPS32_R2),)
-      FEATURES += mips16
+      ifneq ($(BOARD),grx500)
+        FEATURES += mips16
+      endif
     endif
 
     # remove duplicates

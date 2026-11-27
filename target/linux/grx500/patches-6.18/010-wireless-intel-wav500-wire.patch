@@ -1,0 +1,19 @@
+From: Blue Cave OpenWrt Bringup
+Subject: [PATCH] wireless: intel: wire clean-room wav500 driver
+
+--- a/drivers/net/wireless/intel/Kconfig
++++ b/drivers/net/wireless/intel/Kconfig
+@@ -15,5 +15,6 @@ if WLAN_VENDOR_INTEL
+ source "drivers/net/wireless/intel/ipw2x00/Kconfig"
+ source "drivers/net/wireless/intel/iwlegacy/Kconfig"
+ source "drivers/net/wireless/intel/iwlwifi/Kconfig"
++source "drivers/net/wireless/intel/wav500/Kconfig"
+ 
+ endif # WLAN_VENDOR_INTEL
+--- a/drivers/net/wireless/intel/Makefile
++++ b/drivers/net/wireless/intel/Makefile
+@@ -6,3 +6,4 @@ obj-$(CONFIG_IWLEGACY)	+= iwlegacy/
+ 
+ obj-$(CONFIG_IWLWIFI)	+= iwlwifi/
+ obj-$(CONFIG_IWLMEI)	+= iwlwifi/
++obj-$(CONFIG_WAV500_WIFI)	+= wav500/

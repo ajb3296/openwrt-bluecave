@@ -1,0 +1,144 @@
+From: Blue Cave OpenWrt Bringup
+Subject: [PATCH] usb: dwc3: add GRX500/GRX350 USB 3.0 glue driver
+
+--- a/drivers/usb/dwc3/Kconfig
++++ b/drivers/usb/dwc3/Kconfig
+@@ -200,4 +200,11 @@
+ 	  the dwc3 child node in the device tree.
+ 	  Say 'Y' or 'M' here if your platform integrates DWC3 in a similar way.
+ 
++config USB_DWC3_GRX500
++	tristate "Intel/Lantiq GRX350/GRX500 USB3 Glue Driver"
++	depends on OF && MFD_SYSCON
++	default USB_DWC3
++	help
++	  Support DesignWare USB3 controllers on Intel/Lantiq GRX350/GRX500 SoCs.
++
+ endif
+--- a/drivers/usb/dwc3/Makefile
++++ b/drivers/usb/dwc3/Makefile
+@@ -58,3 +58,4 @@
+ obj-$(CONFIG_USB_DWC3_OCTEON)		+= dwc3-octeon.o
+ obj-$(CONFIG_USB_DWC3_RTK)		+= dwc3-rtk.o
+ obj-$(CONFIG_USB_DWC3_GENERIC_PLAT)	+= dwc3-generic-plat.o
++obj-$(CONFIG_USB_DWC3_GRX500)		+= dwc3-grx500.o
+--- /dev/null
++++ b/drivers/usb/dwc3/dwc3-grx500.c
+@@ -0,0 +1,117 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * DesignWare USB3 Glue Layer for Intel/Lantiq GRX350/GRX500
++ */
++
++#include <linux/bitops.h>
++#include <linux/delay.h>
++#include <linux/io.h>
++#include <linux/mfd/syscon.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/of_platform.h>
++#include <linux/platform_device.h>
++#include <linux/regmap.h>
++
++#define CGU_CLK_SR1			0x0120
++#define CGU_CLK_CR1_A			0x0124
++#define CGU_USB0_BIT			BIT(6)
++#define CGU_USB1_BIT			BIT(27)
++
++#define RCU_RST_REQ2			0x0048
++#define RCU_USB_PHY0_RST_BIT		BIT(4)
++#define RCU_USB_PHY1_RST_BIT		BIT(5)
++
++#define RCU_USB0_CFG			0x80018
++#define RCU_USB1_CFG			0x80034
++#define CHIPTOP_AXI_DEV_END		BIT(9)
++#define CHIPTOP_AXI_HOST_END		BIT(10)
++
++static int dwc3_grx500_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct device_node *node = dev->of_node;
++	struct regmap *rcu, *cgu;
++	void __iomem *probe_reg;
++	u32 port_id = 0;
++	u32 cfg_off, phy_bit, clk_bit;
++	u32 sr1 = 0, rst2 = 0, ucfg = 0;
++	phys_addr_t usb_phys;
++	int ret;
++
++	rcu = syscon_regmap_lookup_by_phandle(node, "intel,rcu");
++	if (IS_ERR(rcu)) {
++		dev_err(dev, "failed to get intel,rcu syscon\n");
++		return PTR_ERR(rcu);
++	}
++
++	cgu = syscon_regmap_lookup_by_phandle(node, "intel,cgu");
++	if (IS_ERR(cgu)) {
++		dev_err(dev, "failed to get intel,cgu syscon\n");
++		return PTR_ERR(cgu);
++	}
++
++	of_property_read_u32(node, "intel,usb-port", &port_id);
++	cfg_off = (port_id == 0) ? RCU_USB0_CFG : RCU_USB1_CFG;
++	phy_bit = (port_id == 0) ? RCU_USB_PHY0_RST_BIT : RCU_USB_PHY1_RST_BIT;
++	clk_bit = (port_id == 0) ? CGU_USB0_BIT : CGU_USB1_BIT;
++	usb_phys = (port_id == 0) ? 0x1a300000 : 0x1a500000;
++
++	/* 1. Enable USB clock gate in CGU */
++	regmap_write(cgu, CGU_CLK_CR1_A, clk_bit);
++	msleep(50);
++
++	/* 2. Set AXI Host Port to Big Endian mode (matches GRX500 SWAP_IO_SPACE=n) */
++	regmap_update_bits(rcu, cfg_off,
++			   CHIPTOP_AXI_DEV_END | CHIPTOP_AXI_HOST_END,
++			   CHIPTOP_AXI_HOST_END);
++	msleep(50);
++
++	/* 3. Release USB PHY from reset (0 = no reset) */
++	regmap_update_bits(rcu, RCU_RST_REQ2, phy_bit, 0);
++	msleep(50);
++
++	regmap_read(cgu, CGU_CLK_SR1, &sr1);
++	regmap_read(rcu, RCU_RST_REQ2, &rst2);
++	regmap_read(rcu, cfg_off, &ucfg);
++
++	probe_reg = ioremap(usb_phys + 0xc120, 4);
++	if (probe_reg) {
++		dev_info(dev, "USB%u: SR1=0x%08x RST2=0x%08x CFG=0x%08x GSNPSID(le=0x%08x, be=0x%08x)\n",
++			 port_id, sr1, rst2, ucfg, readl(probe_reg), ioread32be(probe_reg));
++		iounmap(probe_reg);
++	}
++
++	ret = of_platform_populate(node, NULL, NULL, dev);
++	if (ret) {
++		dev_err(dev, "failed to populate dwc3 child devices: %d\n", ret);
++		return ret;
++	}
++
++	return 0;
++}
++
++static void dwc3_grx500_remove(struct platform_device *pdev)
++{
++	of_platform_depopulate(&pdev->dev);
++}
++
++static const struct of_device_id dwc3_grx500_of_match[] = {
++	{ .compatible = "lantiq,dwc3-grx500" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, dwc3_grx500_of_match);
++
++static struct platform_driver dwc3_grx500_driver = {
++	.probe		= dwc3_grx500_probe,
++	.remove		= dwc3_grx500_remove,
++	.driver		= {
++		.name	= "dwc3-grx500",
++		.of_match_table = dwc3_grx500_of_match,
++	},
++};
++
++module_platform_driver(dwc3_grx500_driver);
++
++MODULE_LICENSE("GPL");
++MODULE_DESCRIPTION("DesignWare USB3 Intel/Lantiq GRX500 Glue Layer");
