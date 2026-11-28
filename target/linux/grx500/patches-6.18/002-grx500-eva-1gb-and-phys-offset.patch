@@ -12,15 +12,6 @@ Subject: [PATCH] mips: grx500: enable EVA 1GB, PHYS_OFFSET=0x20000000, disable S
  	select SYS_HAS_CPU_MIPS32_R1
  	select SYS_HAS_CPU_MIPS32_R2
  	select SYS_HAS_CPU_MIPS32_R5
-@@ -580,7 +580,7 @@
- 	select PCI_GT64XXX_PCI0
- 	select RTC_MC146818_LIB
- 	select SMP_UP if SMP
--	select SWAP_IO_SPACE
-+	select EVA
- 	select SYS_HAS_CPU_MIPS32_R1
- 	select SYS_HAS_CPU_MIPS32_R2
- 	select SYS_HAS_CPU_MIPS32_R3_5
 --- a/arch/mips/generic/Platform
 +++ b/arch/mips/generic/Platform
 @@ -12,7 +12,7 @@

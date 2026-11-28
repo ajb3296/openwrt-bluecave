@@ -231,38 +231,43 @@ static int wav500_cfg_start_ap(struct wiphy *wiphy, struct net_device *dev,
 	}
 	ch = (u8)ieee80211_frequency_to_channel(freq);
 
-	ret = wav500_umi_pre_activate(priv);
-	if (ret)
-		return ret;
-	ret = wav500_umi_hdk_config(priv, 0, 0x000003ff, 0x000000ff);
-	if (ret)
-		return ret;
-
 	if (!priv->vap_added) {
+		ret = wav500_umi_pre_activate(priv);
+		if (ret)
+			return ret;
+		ret = wav500_umi_hdk_config(priv, 0, 0x000003ff, 0x000000ff);
+		if (ret)
+			return ret;
+
 		ret = wav500_umi_vap_db_op(priv, vif->vap_id, true);
 		if (ret)
 			return ret;
+
+		ret = wav500_umi_activate_ap(priv, vif->vap_id, dev->dev_addr,
+					     settings->ssid, settings->ssid_len,
+					     settings->beacon_interval ?: 100);
+		if (ret)
+			return ret;
+
+		ret = wav500_umi_set_radio_mode(priv, true);
+		if (ret)
+			return ret;
+		msleep(200);
+
+		ret = wav500_umi_calibrate(priv, ch, width);
+		if (ret)
+			return ret;
+
+		wav500_umi_set_antennas(priv, 0x0f, 0x0f);
+		wav500_umi_set_tx_power_offset(priv, 0);
+		wav500_umi_set_tpc_config(priv);
+		wav500_umi_set_tpc_gen5(priv, ch);
+	} else {
+		ret = wav500_umi_set_radio_mode(priv, true);
+		if (ret)
+			return ret;
+		msleep(200);
 	}
-
-	ret = wav500_umi_activate_ap(priv, vif->vap_id, dev->dev_addr,
-				     settings->ssid, settings->ssid_len,
-				     settings->beacon_interval ?: 100);
-	if (ret)
-		return ret;
-
-	ret = wav500_umi_set_radio_mode(priv, true);
-	if (ret)
-		return ret;
-	msleep(200);
-
-	ret = wav500_umi_calibrate(priv, ch, width);
-	if (ret)
-		return ret;
-
-	wav500_umi_set_antennas(priv, 0x0f, 0x0f);
-	wav500_umi_set_tx_power_offset(priv, 0);
-	wav500_umi_set_tpc_config(priv);
-	wav500_umi_set_tpc_gen5(priv, ch);
 
 	ret = wav500_umi_set_chan(priv, freq, width, center_freq);
 	if (ret)
@@ -307,9 +312,12 @@ static int wav500_cfg_stop_ap(struct wiphy *wiphy, struct net_device *dev,
 			      unsigned int link_id)
 {
 	struct wav500_vif *vif = netdev_priv(dev);
+	struct wav500_priv *priv = vif->priv;
 
 	vif->ap_started = false;
 	netif_carrier_off(dev);
+	if (priv->fw_ready)
+		wav500_umi_set_radio_mode(priv, false);
 	return 0;
 }
 
@@ -321,10 +329,8 @@ static int wav500_cfg_add_key(struct wiphy *wiphy, struct net_device *netdev,
 	struct wav500_priv *priv = vif->priv;
 	u16 sid = 0x3ffa;
 
-	if (!priv->fw_ready)
+	if (!priv->fw_ready || !priv->vap_added)
 		return -ENODEV;
-	if (!priv->vap_added)
-		return 0;
 	if (pairwise) {
 		if (!mac_addr || wav500_sta_find_sid(priv, mac_addr, &sid))
 			return -ENOENT;
@@ -337,7 +343,17 @@ static int wav500_cfg_del_key(struct wiphy *wiphy, struct net_device *netdev,
 			      int link_id, u8 key_index, bool pairwise,
 			      const u8 *mac_addr)
 {
-	return 0;
+	struct wav500_vif *vif = netdev_priv(netdev);
+	struct wav500_priv *priv = vif->priv;
+	u16 sid = 0x3ffa;
+
+	if (!priv->fw_ready || !priv->vap_added)
+		return 0;
+	if (pairwise) {
+		if (!mac_addr || wav500_sta_find_sid(priv, mac_addr, &sid))
+			return 0;
+	}
+	return wav500_umi_del_key(priv, vif->vap_id, sid, key_index, pairwise);
 }
 
 static int wav500_cfg_set_default_key(struct wiphy *wiphy,
@@ -349,7 +365,7 @@ static int wav500_cfg_set_default_key(struct wiphy *wiphy,
 	struct wav500_priv *priv = vif->priv;
 
 	if (!priv->fw_ready || !priv->vap_added)
-		return 0;
+		return -ENODEV;
 	return wav500_umi_set_default_key(priv, vif->vap_id, 0x3ffa,
 					  multicast || !unicast, key_index);
 }
@@ -366,15 +382,17 @@ static int wav500_cfg_add_station(struct wiphy *wiphy, struct net_device *dev,
 	if (!priv->fw_ready)
 		return -ENODEV;
 
-	if (wav500_sta_find_sid(priv, mac, &sid)) {
-		ret = wav500_umi_request_sid(priv, mac, &sid);
-		if (ret)
-			return ret;
-		ret = wav500_sta_register(priv, mac, sid, vif->vap_id);
-		if (ret) {
-			wav500_umi_remove_sid(priv, sid);
-			return ret;
-		}
+	/* Avoid duplicate UMI_STA_ADD on an already-registered station */
+	if (!wav500_sta_find_sid(priv, mac, &sid))
+		return 0;
+
+	ret = wav500_umi_request_sid(priv, mac, &sid);
+	if (ret)
+		return ret;
+	ret = wav500_sta_register(priv, mac, sid, vif->vap_id);
+	if (ret) {
+		wav500_umi_remove_sid(priv, sid);
+		return ret;
 	}
 
 	return wav500_umi_add_sta(priv, vif->vap_id, sid, mac, params);

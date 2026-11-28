@@ -1988,6 +1988,7 @@ static int dma_chan_4dws_read(struct dmax_chan *pch, char **dataptr, void **opt)
 				"%s DMA map failed\n", __func__);
 			pch->free(buf, p);
 			buf = NULL;
+			spin_unlock_irqrestore(&pch->irq_lock, sys_flag);
 			return -ENOMEM;
 		}
 		rx_desc_p->status.field.byte_offset = byte_offset;
@@ -2058,6 +2059,7 @@ static int dma_chan_2dws_read(struct dmax_chan *pch, char **dataptr, void **opt)
 				"%s DMA map failed\n", __func__);
 			pch->free(buf, p);
 			buf = NULL;
+			spin_unlock_irqrestore(&pch->irq_lock, sys_flag);
 			return -ENOMEM;
 		}
 		rx_desc_p->status.field.byte_offset = byte_offset;
@@ -2165,6 +2167,7 @@ static int dma_chan_4dws_write(struct dmax_chan *pch, char *dataptr,
 		len, DMA_TO_DEVICE) - byte_offset;
 	if (dma_mapping_error(pctrl->dev, tx_desc_p->data_pointer)) {
 		dev_err(pctrl->dev, "%s DMA map failed\n", __func__);
+		spin_unlock_irqrestore(&pch->irq_lock, sys_flag);
 		return -ENOMEM;
 	}
 	tx_desc_p->status.field.byte_offset = byte_offset;
@@ -2245,6 +2248,7 @@ static int dma_chan_2dws_write(struct dmax_chan *pch, char *dataptr,
 		len, DMA_TO_DEVICE) - byte_offset;
 	if (dma_mapping_error(pctrl->dev, tx_desc_p->data_pointer)) {
 		dev_err(pctrl->dev, "%s DMA map failed\n", __func__);
+		spin_unlock_irqrestore(&pch->irq_lock, sys_flag);
 		return -ENOMEM;
 	}
 	tx_desc_p->status.field.byte_offset = byte_offset;
@@ -3904,7 +3908,9 @@ static int ltq_dma_probe(struct platform_device *pdev)
 	pctrl->chans = MS(id, DMA_ID_CHNR);
 	pctrl->port_nrs = MS(id, DMA_ID_PRTNR);
 
-	dma_cfg_init(pctrl);
+	err = dma_cfg_init(pctrl);
+	if (err)
+		return err;
 
 	dma_irq_chip_init(pctrl);
 
@@ -3912,7 +3918,9 @@ static int ltq_dma_probe(struct platform_device *pdev)
 		dma_get_name_by_cid(pctrl->cid), pctrl->membase,
 		pctrl->chained_irq, pctrl->irq_base);
 
-	dma_ctrl_init(pctrl);
+	err = dma_ctrl_init(pctrl);
+	if (err)
+		return err;
 
 	tasklet_init(&pctrl->dma_tasklet, do_dma_tasklet, (unsigned long)pctrl);
 

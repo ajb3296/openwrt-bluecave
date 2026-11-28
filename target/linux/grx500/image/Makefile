@@ -3,8 +3,10 @@
 include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/image.mk
 
+ifndef IB
 ifeq ($(SUBTARGET),)
   DEVICE_CHECK_PROFILE = $(CONFIG_TARGET_$(call target_conf,$(BOARD))_$(1))
+endif
 endif
 
 KERNEL_LOADADDR := 0xa0020000

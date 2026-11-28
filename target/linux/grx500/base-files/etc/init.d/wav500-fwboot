@@ -4,10 +4,21 @@
 START=19
 
 start() {
-	[ -f /lib/firmware/wav500/ap_upper_gen5b_wrx_500.bin ] || return 0
-
-	for fw_boot in /sys/bus/pci/drivers/wav500/*/fw_boot; do
-		[ -w "$fw_boot" ] && echo 1 > "$fw_boot"
+	for dev in /sys/bus/pci/drivers/wav500/*; do
+		[ -w "$dev/fw_boot" ] || continue
+		case "$(basename "$dev")" in
+		0000:*)
+			[ -f /lib/firmware/wav500/ap_upper_gen5b_wrx_514.bin ] || continue
+			;;
+		0001:*)
+			[ -f /lib/firmware/wav500/ap_upper_gen5b_wrx_500.bin ] || continue
+			;;
+		*)
+			[ -f /lib/firmware/wav500/ap_upper_gen5b_wrx_500.bin ] || \
+			[ -f /lib/firmware/wav500/ap_upper_gen5b_wrx_514.bin ] || continue
+			;;
+		esac
+		echo 1 > "$dev/fw_boot"
 	done
 }
 

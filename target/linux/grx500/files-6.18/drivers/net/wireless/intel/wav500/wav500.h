@@ -206,6 +206,8 @@ int wav500_umi_add_sta(struct wav500_priv *priv, u8 vap_id, u16 sid,
 int wav500_umi_remove_sta(struct wav500_priv *priv, u16 sid);
 int wav500_umi_set_key(struct wav500_priv *priv, u8 vap_id, u16 sid,
 		       u8 key_idx, bool pairwise, struct key_params *params);
+int wav500_umi_del_key(struct wav500_priv *priv, u8 vap_id, u16 sid,
+		       u8 key_idx, bool pairwise);
 int wav500_umi_set_default_key(struct wav500_priv *priv, u8 vap_id, u16 sid,
 			       bool is_group, u8 key_idx);
 int wav500_start_test_ap(struct wav500_priv *priv, int mode);

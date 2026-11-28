@@ -3,7 +3,7 @@
 PART_NAME=firmware
 REQUIRE_IMAGE_METADATA=1
 
-RAMFS_COPY_BIN='fw_printenv fw_setenv'
+RAMFS_COPY_BIN='fw_printenv'
 RAMFS_COPY_DATA='/etc/fw_env.config /var/lock/fw_printenv.lock'
 
 bluecave_get_active_bank() {
@@ -54,10 +54,6 @@ platform_do_upgrade() {
 		else
 			CI_KERNPART="kernelA"
 			CI_ROOTPART="rootfsA"
-		fi
-
-		if command -v fw_setenv >/dev/null 2>&1; then
-			fw_setenv update_chk 0 2>/dev/null || true
 		fi
 
 		nand_do_upgrade "$1"

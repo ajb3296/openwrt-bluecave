@@ -360,10 +360,10 @@ static void wav500_drain_bss_rx(struct wav500_priv *priv)
 			if (priv->rx_mgmt_count < 3 && len > WAV500_BSS_RX_HDR_LEN) {
 				const u8 *f = buf + WAV500_BSS_RX_HDR_LEN;
 
-				dev_info(&priv->pdev->dev,
-					 "BSS_RX[%u]: w0=0x%08x w2=0x%08x w3=0x%08x w4=0x%08x len=%u fc=%02x%02x da=%pM sa=%pM\n",
-					 priv->rx_mgmt_count, w0, w2, w3, idx, len,
-					 f[0], f[1], f + 4, f + 10);
+				dev_dbg(&priv->pdev->dev,
+					"BSS_RX[%u]: w0=0x%08x w2=0x%08x w3=0x%08x w4=0x%08x len=%u fc=%02x%02x da=%pM sa=%pM\n",
+					priv->rx_mgmt_count, w0, w2, w3, idx, len,
+					f[0], f[1], f + 4, f + 10);
 			}
 
 			if (((w0 >> 15) & 3) == 3 && ((w0 >> 24) & 3) == 2) {

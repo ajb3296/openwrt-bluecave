@@ -195,8 +195,12 @@ static int wav500_boot_firmware(struct wav500_priv *priv, bool load_psdb)
 	priv->fw_ready = false;
 	priv->pre_activated = false;
 	priv->vap_added = false;
-	priv->dp_inited = false;
+	priv->dp_irq_enabled = false;
 	priv->irq_count = 0;
+
+	/* Free any previous DMA ring/buffer pools before re-initializing */
+	wav500_dma_cleanup_rings(priv);
+	priv->dp_inited = false;
 
 	/* Mask interrupts during bring-up */
 	wav500_w32(priv, WAV500_IRQ_MASK, 0);

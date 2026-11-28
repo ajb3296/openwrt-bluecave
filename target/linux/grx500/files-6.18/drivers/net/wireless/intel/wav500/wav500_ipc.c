@@ -205,12 +205,24 @@ void wav500_ipc_poll_rx(struct wav500_priv *priv)
 				u32 gid    = wav500_r32(priv, bdr_off + 0x30);
 
 				dev_err(dev,
-					"MAC_FATAL (%s): GroupID=%u FileID=%u Line=%u TS=0x%08x (p0=0x%08x p1=0x%08x)\n",
+					"MAC_FATAL (%s): GroupID=%u FileID=%u Line=%u TS=0x%08x (p0=0x%08x p1=0x%08x) - marking radio offline\n",
 					origin ? "upper" : "lower",
 					gid, fid, line, ts, p0, p1);
+				priv->fw_ready = false;
+				priv->dp_irq_enabled = false;
+				priv->vap_added = false;
+				if (priv->primary_vif) {
+					priv->primary_vif->ap_started = false;
+					if (priv->primary_vif->ndev)
+						netif_carrier_off(priv->primary_vif->ndev);
+				}
+				if (priv->man_pending) {
+					priv->man_pending = false;
+					complete(&priv->man_cfm);
+				}
 			} else if (ind_id != 0x332a) {
-				dev_info(dev, "MAN_IND rx: idx=%u msg_id=0x%04x p0=0x%08x p1=0x%08x\n",
-					 idx, ind_id, p0, p1);
+				dev_dbg(dev, "MAN_IND rx: idx=%u msg_id=0x%04x p0=0x%08x p1=0x%08x\n",
+					idx, ind_id, p0, p1);
 			}
 			/* Return indication descriptor to firmware */
 			wav500_ipc_ring_push(priv,
@@ -1176,8 +1188,8 @@ int wav500_umi_set_beacon(struct wav500_priv *priv, u8 vap_id,
 		return ret;
 	}
 
-	dev_info(dev, "UMI SET_BEACON(vap=%u dma=%pad len=%zu+%zu) cfm: status=%u\n",
-		 vap_id, &priv->beacon_dma, head_len, tail_len, rsp[13]);
+	dev_dbg(dev, "UMI SET_BEACON(vap=%u dma=%pad len=%zu+%zu) cfm: status=%u\n",
+		vap_id, &priv->beacon_dma, head_len, tail_len, rsp[13]);
 	return rsp[13] ? -EIO : 0;
 }
 
@@ -1669,9 +1681,33 @@ int wav500_umi_set_key(struct wav500_priv *priv, u8 vap_id, u16 sid,
 		dev_err(dev, "UMI SET_KEY(sid=0x%x idx=%u) failed: %d\n", use_sid, key_idx, ret);
 		return ret;
 	}
-	dev_info(dev, "UMI SET_KEY(vap=%u sid=0x%x idx=%u cipher=%u pw=%d) cfm: st=%u\n",
-		 vap_id, use_sid, key_idx, cipher_id, pairwise, rsp[0]);
-	return 0;
+	{
+		u16 st = get_unaligned_le16(&rsp[0]);
+
+		dev_info(dev, "UMI SET_KEY(vap=%u sid=0x%x idx=%u cipher=%u pw=%d) cfm: st=%u\n",
+			 vap_id, use_sid, key_idx, cipher_id, pairwise, st);
+		return st ? -EIO : 0;
+	}
+}
+
+int wav500_umi_del_key(struct wav500_priv *priv, u8 vap_id, u16 sid,
+		       u8 key_idx, bool pairwise)
+{
+	u8 req[0x3a] = { };
+	u8 rsp[0x3a] = { };
+	u16 use_sid = pairwise ? sid : 0x3ffa;
+	int ret;
+
+	put_unaligned_le16(use_sid, &req[2]);
+	put_unaligned_le16(pairwise ? 0 : 1, &req[4]);
+	put_unaligned_le16(0, &req[6]); /* cipher = NONE (clear key) */
+	put_unaligned_le16(key_idx, &req[8]);
+
+	ret = wav500_ipc_send_man_req(priv, WAV500_UMI_MAN_SET_KEY_REQ, vap_id,
+				      req, sizeof(req), rsp, sizeof(rsp), 5000);
+	if (ret)
+		return ret;
+	return get_unaligned_le16(&rsp[0]) ? -EIO : 0;
 }
 
 int wav500_umi_set_default_key(struct wav500_priv *priv, u8 vap_id, u16 sid,
@@ -1687,5 +1723,7 @@ int wav500_umi_set_default_key(struct wav500_priv *priv, u8 vap_id, u16 sid,
 
 	ret = wav500_ipc_send_man_req(priv, WAV500_UMI_MAN_SET_DEF_KEY_REQ, vap_id,
 				      req, sizeof(req), rsp, sizeof(rsp), 5000);
-	return ret;
+	if (ret)
+		return ret;
+	return get_unaligned_le16(&rsp[0]) ? -EIO : 0;
 }
