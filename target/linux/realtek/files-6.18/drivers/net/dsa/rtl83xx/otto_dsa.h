@@ -447,6 +447,7 @@ struct rtldsa_config {
 	void (*vlan_set_egr_filter)(struct otto_dsa_priv *priv, int port, enum egr_filter state);
 	void (*enable_learning)(struct otto_dsa_priv *priv, int port, bool enable);
 	void (*set_l2_new_sa_trap)(struct otto_dsa_priv *priv, int port, bool trap);
+	void (*l2_set_uc_lm_act)(struct otto_dsa_priv *priv, int port, u32 action);
 	void (*enable_flood)(struct otto_dsa_priv *priv, int port, bool enable);
 	void (*enable_mcast_flood)(struct otto_dsa_priv *priv, int port, bool enable);
 	void (*enable_bcast_flood)(struct otto_dsa_priv *priv, int port, bool enable);
@@ -534,13 +535,14 @@ struct rtldsa_config {
 	void (*led_init)(struct otto_dsa_priv *priv);
 	u32 (*get_egress_rate)(struct otto_dsa_priv *priv, int port);
 	int (*set_egress_rate)(struct otto_dsa_priv *priv, int port, u32 rate);
-	void (*queue_sched_set)(struct otto_dsa_priv *priv, int port, int queue, u32 weight,
-				bool strict);
-	int (*red_set)(struct otto_dsa_priv *priv, int port,
-		       const struct tc_red_qopt_offload_params **p);
-	void (*queue_drops_update)(struct otto_dsa_priv *priv, int port);
-	int (*egress_shaper_set)(struct otto_dsa_priv *priv, int port, int queue,
-				 u64 rate_bytes_ps, u32 burst);
+	void (*qos_queue_sched_set)(struct otto_dsa_priv *priv, int port, int queue, u32 weight,
+				    bool strict);
+	int (*qos_red_set)(struct otto_dsa_priv *priv, int port,
+			   const struct tc_red_qopt_offload_params **p);
+	void (*qos_queue_drops_update)(struct otto_dsa_priv *priv, int port);
+	int (*tc_egress_shaper_set)(struct otto_dsa_priv *priv, int port, int queue,
+				    u64 rate_bytes_ps, u32 burst);
+	u32 tc_max_burst;
 	void (*qos_init)(struct otto_dsa_priv *priv);
 	int (*trk_mbr_ctr)(int group);
 	void (*lag_switch_init)(struct otto_dsa_priv *priv);
